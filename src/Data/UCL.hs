@@ -9,7 +9,9 @@ module Data.UCL
 ) where
 
 import Foreign.C
-import Foreign.Ptr
+  ( CUInt(..), CInt(..), CSize(..), CDouble(..), CString, CStringLen
+  , newCString, peekCString )
+import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Text.Foreign as TF
 import Data.Text (Text)
@@ -73,8 +75,8 @@ peekCStringText cstr = do
 --
 -- >>> parseByteString $ fromString "{a: [1,2], b: 3min, a: [4]}"
 -- Right (UCLMap (fromList
---   [ (UCLText "a", UCLArray [UCLInt 1, UCLInt 2, UCLInt 4])
---   , (UCLText "b", UCLTime 180s                           )
+--   [ ("a", UCLArray [UCLInt 1, UCLInt 2, UCLInt 4])
+--   , ("b", UCLTime 180s                           )
 --   ]))
 --
 -- This function is __not__ safe to call on untrusted input: configurations can
@@ -87,8 +89,8 @@ parseByteString bs = useAsCStringLen bs parseCStringLen
 --
 -- >>> parseString "{a: [1,2], 🌅: 3min, a: [4]}"
 -- Right (UCLMap (fromList
---   [ (UCLText "a"      , UCLArray [UCLInt 1, UCLInt 2, UCLInt 4])
---   , (UCLText "\127749", UCLTime 180s                           )
+--   [ ("a"      , UCLArray [UCLInt 1, UCLInt 2, UCLInt 4])
+--   , ("\127749", UCLTime 180s                           )
 --   ]))
 --
 -- This function is __not__ safe to call on untrusted input: configurations can
@@ -123,7 +125,7 @@ parseFile s = do
     else Left <$> (ucl_parser_get_error p >>= peekCString)
 
 -- | An UCL object
-data UCL = UCLMap (Map UCL UCL)
+data UCL = UCLMap (Map Text UCL)
          | UCLArray [UCL]
          | UCLInt Int
          | UCLDouble Double
@@ -147,7 +149,7 @@ typedHandleToUCL UCL_USERDATA _   = error "Userdata object"
 typedHandleToUCL UCL_NULL     _   = error "Null object"
 typedHandleToUCL _            _   = error "Unknown Type"
 
-uclObjectToMap :: UCLObjectHandle -> Map UCL UCL
+uclObjectToMap :: UCLObjectHandle -> Map Text UCL
 uclObjectToMap o = unsafePerformIO $ do
   iter <- ucl_object_iterate_new o
   go iter Map.empty
@@ -157,7 +159,7 @@ uclObjectToMap o = unsafePerformIO $ do
       case ucl_object_type obj of
         UCL_NULL -> pure m
         _        -> go it $ Map.insert (getUclKey obj) (handleToUCL obj) m
-    getUclKey obj = UCLText $ unsafePerformIO $ peekCStringText $ ucl_object_key obj
+    getUclKey obj = unsafePerformIO $ peekCStringText $ ucl_object_key obj
 
 uclArrayToList :: UCLObjectHandle -> [UCL]
 uclArrayToList o = unsafePerformIO $ do
