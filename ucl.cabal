@@ -1,7 +1,7 @@
 cabal-version:       2.2
 
 name:                ucl
-version:             0.1.0.0
+version:             0.2.0.0
 synopsis:            Datatype and parser for the Universal Configuration Language (UCL) using libucl
 description:
   The Universal Configuration Language (UCL) is a configuration language
@@ -11,7 +11,8 @@ description:
   This library contains a datatype representing UCL objects, and a parser.
   It is based on the C library [libucl](https://github.com/vstakhov/libucl),
   which is needed to build this package.
--- bug-reports:         mailto:fgaz@fgaz.me
+homepage:            https://sr.ht/~fgaz/haskell-ucl/
+bug-reports:         https://todo.sr.ht/~fgaz/haskell-ucl
 license:             BSD-3-Clause
 license-file:        LICENSE
 author:              Francesco Gazzetta
