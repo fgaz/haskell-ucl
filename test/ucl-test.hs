@@ -11,7 +11,7 @@ main :: IO ()
 main = do
   parsed1 <- parseString "0: 1min"
   print parsed1
-  parsed <- parseString "\"a\": [12,34], 1:2, 1:3, 2:\"ab🌅c\", 3: yes, \"a\": [56]"
+  parsed <- parseString "\"a\": [12,34], 1:2, 1:3, 2:\"ab🌅c\", 3: yes, \"a\": [56], \"b\": \"foo\""
   print parsed
-  unless (parsed == Right (UCLMap (fromList [("1",UCLInt 2),("2",UCLText "ab\127749c"),("3",UCLBool True),("a",UCLArray [UCLInt 12,UCLInt 34])])))
+  unless (parsed == Right (UCLMap (fromList [("1",UCLInt 2),("2",UCLText "ab\127749c"),("3",UCLBool True),("a",UCLArray [UCLInt 12,UCLInt 34, UCLInt 56]),("b",UCLText "foo")])))
      exitFailure

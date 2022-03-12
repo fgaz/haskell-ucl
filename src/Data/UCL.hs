@@ -10,7 +10,7 @@ module Data.UCL
 
 import Foreign.C
   ( CUInt(..), CInt(..), CSize(..), CDouble(..), CString, CStringLen
-  , newCString, peekCString )
+  , newCString, newCStringLen, peekCString )
 import Foreign.Ptr (Ptr)
 import System.IO.Unsafe (unsafePerformIO)
 import qualified Data.Text.Foreign as TF
@@ -19,6 +19,7 @@ import qualified Data.Map as Map
 import Data.Map (Map)
 import Data.Time.Clock (DiffTime)
 import Data.ByteString (ByteString, useAsCStringLen)
+import Control.Monad ((>=>))
 
 
 newtype ParserHandle = ParserHandle (Ptr ())
@@ -47,7 +48,7 @@ pattern UCL_NULL = 8
 
 
 foreign import ccall "ucl_parser_new" ucl_parser_new :: CInt -> IO ParserHandle
-foreign import ccall "ucl_parser_add_string" ucl_parser_add_string :: ParserHandle -> CString -> CUInt -> IO Bool
+foreign import ccall "ucl_parser_add_string" ucl_parser_add_string :: ParserHandle -> CString -> CSize -> IO Bool
 foreign import ccall "ucl_parser_add_file" ucl_parser_add_file :: ParserHandle -> CString -> IO Bool
 foreign import ccall "ucl_parser_get_object" ucl_parser_get_object :: ParserHandle -> IO UCLObjectHandle
 foreign import ccall "ucl_parser_get_error" ucl_parser_get_error :: ParserHandle -> IO CString
@@ -97,9 +98,7 @@ parseByteString bs = useAsCStringLen bs parseCStringLen
 -- read files, make http requests, do "billion laughs" attacks, and possibly
 -- crash the parser.
 parseString :: String -> IO (Either String UCL)
-parseString s = do
-  cs <- newCString s
-  parseCStringLen (cs, length s)
+parseString = newCStringLen >=> parseCStringLen
 
 parseCStringLen :: CStringLen -> IO (Either String UCL)
 parseCStringLen (cs, len) = do
