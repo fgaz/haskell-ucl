@@ -162,20 +162,18 @@ data UCL = UCLMap (Map Text UCL)
 foreignToUCL :: Ptr UCLObject -> IO UCL
 foreignToUCL obj = do
   ty <- ucl_object_type obj
-  typedHandleToUCL ty obj
-
-typedHandleToUCL :: UCL_TYPE -> Ptr UCLObject -> IO UCL
-typedHandleToUCL UCL_OBJECT   obj = UCLMap <$> uclObjectToMap obj
-typedHandleToUCL UCL_ARRAY    obj = UCLArray <$> uclArrayToList obj
-typedHandleToUCL UCL_INT      obj = UCLInt . fromIntegral <$> ucl_object_toint obj
-typedHandleToUCL UCL_FLOAT    obj = UCLDouble . realToFrac <$> ucl_object_todouble obj
-typedHandleToUCL UCL_STRING   obj = UCLText <$> (ucl_object_tostring obj >>= peekCStringText)
-typedHandleToUCL UCL_BOOLEAN  obj = UCLBool <$> ucl_object_toboolean obj
-typedHandleToUCL UCL_TIME     obj = UCLTime . realToFrac <$> ucl_object_todouble obj
--- TODO use Left instead of error
-typedHandleToUCL UCL_USERDATA _   = error "Userdata object"
-typedHandleToUCL UCL_NULL     _   = error "Null object"
-typedHandleToUCL _            _   = error "Unknown Type"
+  case ty of
+    UCL_OBJECT   -> UCLMap <$> uclObjectToMap obj
+    UCL_ARRAY    -> UCLArray <$> uclArrayToList obj
+    UCL_INT      -> UCLInt . fromIntegral <$> ucl_object_toint obj
+    UCL_FLOAT    -> UCLDouble . realToFrac <$> ucl_object_todouble obj
+    UCL_STRING   -> UCLText <$> (ucl_object_tostring obj >>= peekCStringText)
+    UCL_BOOLEAN  -> UCLBool <$> ucl_object_toboolean obj
+    UCL_TIME     -> UCLTime . realToFrac <$> ucl_object_todouble obj
+    -- TODO use Left instead of error
+    UCL_USERDATA -> error "Userdata object"
+    UCL_NULL     -> error "Null object"
+    _            -> error "Unknown Type"
 
 uclObjectToMap :: Ptr UCLObject -> IO (Map Text UCL)
 uclObjectToMap o = do
