@@ -10,9 +10,9 @@ module Data.UCL
 
 import Foreign.C
   ( CUInt(..), CInt(..), CSize(..), CDouble(..), CString, CStringLen
-  , newCString, newCStringLen, peekCString )
-import Foreign.Ptr (Ptr)
-import System.IO.Unsafe (unsafePerformIO)
+  , withCString, withCStringLen, peekCString )
+import Foreign.Ptr (Ptr, FunPtr)
+import Foreign.ForeignPtr
 import qualified Data.Text.Foreign as TF
 import Data.Text (Text)
 import qualified Data.Map as Map
@@ -22,9 +22,12 @@ import Data.ByteString (ByteString, useAsCStringLen)
 import Control.Monad ((>=>))
 
 
-newtype ParserHandle = ParserHandle (Ptr ())
-newtype UCLObjectHandle = UCLObjectHandle (Ptr ())
-newtype UCLIterHandle = UCLIterHandle (Ptr ())
+-- Low-level bindings
+---------------------
+
+data Parser
+data UCLObject
+data UCLIter
 
 type UCL_TYPE = CUInt
 pattern UCL_OBJECT :: UCL_TYPE
@@ -46,23 +49,49 @@ pattern UCL_USERDATA = 7
 pattern UCL_NULL :: UCL_TYPE
 pattern UCL_NULL = 8
 
+foreign import ccall "ucl_parser_new" ucl_parser_new :: CInt -> IO (Ptr Parser)
+foreign import ccall "ucl_parser_add_string" ucl_parser_add_string :: Ptr Parser -> CString -> CSize -> IO Bool
+foreign import ccall "ucl_parser_add_file" ucl_parser_add_file :: Ptr Parser -> CString -> IO Bool
+foreign import ccall "ucl_parser_get_object" ucl_parser_get_object :: Ptr Parser -> IO (Ptr UCLObject)
+foreign import ccall "ucl_parser_get_error" ucl_parser_get_error :: Ptr Parser -> IO CString
+foreign import ccall "&ucl_parser_free" p_ucl_parser_free :: FunPtr (Ptr Parser -> IO ())
 
-foreign import ccall "ucl_parser_new" ucl_parser_new :: CInt -> IO ParserHandle
-foreign import ccall "ucl_parser_add_string" ucl_parser_add_string :: ParserHandle -> CString -> CSize -> IO Bool
-foreign import ccall "ucl_parser_add_file" ucl_parser_add_file :: ParserHandle -> CString -> IO Bool
-foreign import ccall "ucl_parser_get_object" ucl_parser_get_object :: ParserHandle -> IO UCLObjectHandle
-foreign import ccall "ucl_parser_get_error" ucl_parser_get_error :: ParserHandle -> IO CString
-
-foreign import ccall "ucl_object_iterate_new" ucl_object_iterate_new :: UCLObjectHandle -> IO UCLIterHandle
-foreign import ccall "ucl_object_iterate_safe" ucl_object_iterate_safe :: UCLIterHandle -> Bool -> IO UCLObjectHandle
-foreign import ccall "ucl_object_type" ucl_object_type :: UCLObjectHandle -> UCL_TYPE
-foreign import ccall "ucl_object_key" ucl_object_key :: UCLObjectHandle -> CString
-foreign import ccall "ucl_object_toint" ucl_object_toint :: UCLObjectHandle -> CInt
-foreign import ccall "ucl_object_todouble" ucl_object_todouble :: UCLObjectHandle -> CDouble
-foreign import ccall "ucl_object_tostring" ucl_object_tostring :: UCLObjectHandle -> CString
-foreign import ccall "ucl_object_toboolean" ucl_object_toboolean :: UCLObjectHandle -> Bool
+foreign import ccall "ucl_object_iterate_new" ucl_object_iterate_new :: Ptr UCLObject -> IO (Ptr UCLIter)
+foreign import ccall "ucl_object_iterate_safe" ucl_object_iterate_safe :: Ptr UCLIter -> Bool -> IO (Ptr UCLObject)
+foreign import ccall "&ucl_object_iterate_free" p_ucl_object_iterate_free :: FunPtr (Ptr UCLIter -> IO ())
+foreign import ccall "ucl_object_type" ucl_object_type :: Ptr UCLObject -> IO UCL_TYPE
+foreign import ccall "ucl_object_key" ucl_object_key :: Ptr UCLObject -> IO CString
+foreign import ccall "ucl_object_toint" ucl_object_toint :: Ptr UCLObject -> IO CInt
+foreign import ccall "ucl_object_todouble" ucl_object_todouble :: Ptr UCLObject -> IO CDouble
+foreign import ccall "ucl_object_tostring" ucl_object_tostring :: Ptr UCLObject -> IO CString
+foreign import ccall "ucl_object_toboolean" ucl_object_toboolean :: Ptr UCLObject -> IO Bool
+foreign import ccall "&ucl_object_unref" p_ucl_object_unref :: FunPtr (Ptr UCLObject -> IO ())
 
 foreign import ccall "strlen" c_strlen :: CString -> IO CSize
+
+
+-- Mid level interface with ForeignPtr
+--------------------------------------
+
+newParser :: IO (ForeignPtr Parser)
+newParser = ucl_parser_new 0x0 >>= newForeignPtr p_ucl_parser_free
+
+addString :: ForeignPtr Parser -> CStringLen -> IO Bool
+addString fp (cs, len) = withForeignPtr fp $ \p ->
+  ucl_parser_add_string p cs $ fromIntegral len
+
+addFile :: ForeignPtr Parser -> FilePath -> IO Bool
+addFile fp s = withCString s $ \cs ->
+  withForeignPtr fp $ \p -> ucl_parser_add_file p cs
+
+getObject :: ForeignPtr Parser -> IO (ForeignPtr UCLObject)
+getObject = (`withForeignPtr` ucl_parser_get_object) >=> newForeignPtr p_ucl_object_unref
+
+getError :: ForeignPtr Parser -> IO String
+getError = (`withForeignPtr` (ucl_parser_get_error >=> peekCString))
+
+newIterator :: Ptr UCLObject -> IO (ForeignPtr UCLIter)
+newIterator = ucl_object_iterate_new >=> newForeignPtr p_ucl_object_iterate_free
 
 
 peekCStringText :: CString -> IO Text
@@ -98,15 +127,10 @@ parseByteString bs = useAsCStringLen bs parseCStringLen
 -- read files, make http requests, do "billion laughs" attacks, and possibly
 -- crash the parser.
 parseString :: String -> IO (Either String UCL)
-parseString = newCStringLen >=> parseCStringLen
+parseString = (`withCStringLen` parseCStringLen)
 
 parseCStringLen :: CStringLen -> IO (Either String UCL)
-parseCStringLen (cs, len) = do
-  p <- ucl_parser_new 0x0
-  didParse <- ucl_parser_add_string p cs $ fromIntegral len
-  if didParse
-  then Right . handleToUCL <$> ucl_parser_get_object p
-  else Left <$> (ucl_parser_get_error p >>= peekCString)
+parseCStringLen = parseWith addString
 
 -- | Parse the contents of a file into a 'UCL', resolving includes, macros,
 -- variables...
@@ -115,13 +139,15 @@ parseCStringLen (cs, len) = do
 -- read files, make http requests, do "billion laughs" attacks, and possibly
 -- crash the parser.
 parseFile :: FilePath -> IO (Either String UCL)
-parseFile s = do
-    cs <- newCString s
-    p <- ucl_parser_new 0x0
-    didParse <- ucl_parser_add_file p cs
-    if didParse
-    then Right . handleToUCL <$> ucl_parser_get_object p
-    else Left <$> (ucl_parser_get_error p >>= peekCString)
+parseFile = parseWith addFile
+
+parseWith :: (ForeignPtr Parser -> a -> IO Bool) -> a -> IO (Either String UCL)
+parseWith addX x = do
+  p <- newParser
+  didParse <- addX p x
+  if didParse
+  then Right <$> (getObject p >>= flip withForeignPtr foreignToUCL)
+  else Left <$> getError p
 
 -- | An UCL object
 data UCL = UCLMap (Map Text UCL)
@@ -133,40 +159,53 @@ data UCL = UCLMap (Map Text UCL)
          | UCLTime DiffTime
   deriving (Show, Eq, Ord)
 
-handleToUCL :: UCLObjectHandle -> UCL
-handleToUCL o = typedHandleToUCL (ucl_object_type o) o
+foreignToUCL :: Ptr UCLObject -> IO UCL
+foreignToUCL obj = do
+  ty <- ucl_object_type obj
+  typedHandleToUCL ty obj
 
-typedHandleToUCL :: UCL_TYPE -> UCLObjectHandle -> UCL
-typedHandleToUCL UCL_OBJECT   obj = UCLMap $ uclObjectToMap obj
-typedHandleToUCL UCL_ARRAY    obj = UCLArray $ uclArrayToList obj
-typedHandleToUCL UCL_INT      obj = UCLInt $ fromIntegral $ ucl_object_toint obj
-typedHandleToUCL UCL_FLOAT    obj = UCLDouble $ realToFrac $ ucl_object_todouble obj
-typedHandleToUCL UCL_STRING   obj = UCLText $ unsafePerformIO $ peekCStringText $ ucl_object_tostring obj
-typedHandleToUCL UCL_BOOLEAN  obj = UCLBool $ ucl_object_toboolean obj
-typedHandleToUCL UCL_TIME     obj = UCLTime $ realToFrac $ ucl_object_todouble obj
+typedHandleToUCL :: UCL_TYPE -> Ptr UCLObject -> IO UCL
+typedHandleToUCL UCL_OBJECT   obj = UCLMap <$> uclObjectToMap obj
+typedHandleToUCL UCL_ARRAY    obj = UCLArray <$> uclArrayToList obj
+typedHandleToUCL UCL_INT      obj = UCLInt . fromIntegral <$> ucl_object_toint obj
+typedHandleToUCL UCL_FLOAT    obj = UCLDouble . realToFrac <$> ucl_object_todouble obj
+typedHandleToUCL UCL_STRING   obj = UCLText <$> (ucl_object_tostring obj >>= peekCStringText)
+typedHandleToUCL UCL_BOOLEAN  obj = UCLBool <$> ucl_object_toboolean obj
+typedHandleToUCL UCL_TIME     obj = UCLTime . realToFrac <$> ucl_object_todouble obj
+-- TODO use Left instead of error
 typedHandleToUCL UCL_USERDATA _   = error "Userdata object"
 typedHandleToUCL UCL_NULL     _   = error "Null object"
 typedHandleToUCL _            _   = error "Unknown Type"
 
-uclObjectToMap :: UCLObjectHandle -> Map Text UCL
-uclObjectToMap o = unsafePerformIO $ do
-  iter <- ucl_object_iterate_new o
+uclObjectToMap :: Ptr UCLObject -> IO (Map Text UCL)
+uclObjectToMap o = do
+  iter <- newIterator o
   go iter Map.empty
   where 
     go it m = do
-      obj <- ucl_object_iterate_safe it True
-      case ucl_object_type obj of
+      -- NOTE: the reference count of the returned object is not increased,
+      -- so we don't use ForeignPtr
+      obj <- withForeignPtr it (`ucl_object_iterate_safe` True)
+      ty <- ucl_object_type obj
+      case ty of
+        -- FIXME this is not how we check for end of object
         UCL_NULL -> pure m
-        _        -> go it $ Map.insert (getUclKey obj) (handleToUCL obj) m
-    getUclKey obj = unsafePerformIO $ peekCStringText $ ucl_object_key obj
+        _        -> do
+                      k <- ucl_object_key obj >>= peekCStringText
+                      v <- foreignToUCL obj
+                      go it $ Map.insert k v m
 
-uclArrayToList :: UCLObjectHandle -> [UCL]
-uclArrayToList o = unsafePerformIO $ do
-  iter <- ucl_object_iterate_new o
+uclArrayToList :: Ptr UCLObject -> IO [UCL]
+uclArrayToList o = do
+  iter <- newIterator o
   go iter
   where 
     go it = do
-      obj <- ucl_object_iterate_safe it True
-      case ucl_object_type obj of
+      -- NOTE: the reference count of the returned object is not increased
+      -- so we don't use ForeignPtr
+      obj <- withForeignPtr it (`ucl_object_iterate_safe` True)
+      ty <- ucl_object_type obj
+      case ty of
+        -- FIXME this is not how we check for end of object
         UCL_NULL -> pure []
-        _        -> (handleToUCL obj :) <$> go it
+        _        -> (:) <$> foreignToUCL obj <*> go it
