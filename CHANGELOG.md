@@ -1,6 +1,6 @@
 # Revision history for ucl
 
-## 0.2.0.1
+## 0.2.0.1 -- 2022-03-14
 
 * Fixed failure on unicode characters in parseString
 * Fixed memory leaks
