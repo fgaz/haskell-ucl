@@ -1,7 +1,7 @@
 cabal-version:       2.2
 
 name:                ucl
-version:             0.2.0.0
+version:             0.2.0.1
 synopsis:            Datatype and parser for the Universal Configuration Language (UCL) using libucl
 description:
   The Universal Configuration Language (UCL) is a configuration language
