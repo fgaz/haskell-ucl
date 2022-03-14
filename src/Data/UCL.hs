@@ -11,7 +11,7 @@ module Data.UCL
 import Foreign.C
   ( CUInt(..), CInt(..), CSize(..), CDouble(..), CString, CStringLen
   , withCString, withCStringLen, peekCString )
-import Foreign.Ptr (Ptr, FunPtr)
+import Foreign.Ptr (Ptr, FunPtr, nullPtr)
 import Foreign.ForeignPtr
 import qualified Data.Text.Foreign as TF
 import Data.Text (Text)
@@ -172,6 +172,7 @@ foreignToUCL obj = do
     UCL_TIME     -> UCLTime . realToFrac <$> ucl_object_todouble obj
     -- TODO use Left instead of error
     UCL_USERDATA -> error "Userdata object"
+    -- TODO add UCLNull
     UCL_NULL     -> error "Null object"
     _            -> error "Unknown Type"
 
@@ -184,14 +185,12 @@ uclObjectToMap o = do
       -- NOTE: the reference count of the returned object is not increased,
       -- so we don't use ForeignPtr
       obj <- withForeignPtr it (`ucl_object_iterate_safe` True)
-      ty <- ucl_object_type obj
-      case ty of
-        -- FIXME this is not how we check for end of object
-        UCL_NULL -> pure m
-        _        -> do
-                      k <- ucl_object_key obj >>= peekCStringText
-                      v <- foreignToUCL obj
-                      go it $ Map.insert k v m
+      if obj == nullPtr
+      then pure m
+      else do
+        k <- ucl_object_key obj >>= peekCStringText
+        v <- foreignToUCL obj
+        go it $ Map.insert k v m
 
 uclArrayToList :: Ptr UCLObject -> IO [UCL]
 uclArrayToList o = do
@@ -202,8 +201,6 @@ uclArrayToList o = do
       -- NOTE: the reference count of the returned object is not increased
       -- so we don't use ForeignPtr
       obj <- withForeignPtr it (`ucl_object_iterate_safe` True)
-      ty <- ucl_object_type obj
-      case ty of
-        -- FIXME this is not how we check for end of object
-        UCL_NULL -> pure []
-        _        -> (:) <$> foreignToUCL obj <*> go it
+      if obj == nullPtr
+      then pure []
+      else (:) <$> foreignToUCL obj <*> go it

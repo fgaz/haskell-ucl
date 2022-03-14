@@ -18,6 +18,8 @@ main = do
           , ("3",UCLBool True)
           , ("a",UCLArray [UCLInt 12, UCLInt 34, UCLInt 56])
           , ("b",UCLText "foo")]))
+    -- TODO add UCLNull
+    --, ("0: false, 1: null, 2: true", UCLMap $ fromList [("0", UCLBool False), ("1", UCLNull), ("2", UCLBool True)])
     ]
   unless success exitFailure
 
